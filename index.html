@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Procedural Hex Map, CAP 4720 Project</title>
+    <title>Procedural Hex Map CAP4720</title>
 
     <style>
         html, body {
@@ -12,11 +12,75 @@
             width: 100%;
             height: 100%;
         }
+
+        button {
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background-color: #2f363b; /*color behind text*/
+            color: #ffffff; /*text color*/
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #2980b9; /*color behind text when hover*/
+        }
+
     </style>
 
-    <script type="module" src="src/index.js"></script>
+    <script>
+        // TLDR: this lets us switch between the different environments (forest, winter, etc.).
+        function changeEnvironment(environment) {
+            // save the environment to local storage, and reload page.
+            localStorage.setItem('selectedEnvironment', environment);
+            location.reload();
+        }
+
+        // check for the selected environment in local storage on page load.
+        window.onload = function () {
+            const selectedEnvironment = localStorage.getItem('selectedEnvironment');
+
+            // If no environment is selected, default to 'forest'
+            const defaultEnvironment = selectedEnvironment || 'forest';
+
+            const container = document.getElementById('scene-container');
+            loadEnvironment(defaultEnvironment, container);
+            if (!selectedEnvironment) {
+                // remove the default environment from local storage.
+                localStorage.removeItem('selectedEnvironment');
+            }
+        };
+
+        async function loadEnvironment(environment, container) {
+            // clear the container by removing its children.
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            // remove previously loaded scripts.
+            const scripts = document.querySelectorAll('script[type="module"]');
+            scripts.forEach(script => script.remove());
+
+            // load the selected environment script dynamically.
+            const script = document.createElement('script');
+            script.type = 'module';
+            script.src = `src/${environment}.js`;
+            document.head.appendChild(script);
+
+            // wait for the script to be loaded before calling the setup function.
+            await import(`./src/${environment}.js`).then(module => module[`setup${environment.charAt(0).toUpperCase() + environment.slice(1)}Scene`](container));
+        }
+    </script>
 </head>
 <body>
-    
+    <div id="hud">
+        <button onclick="changeEnvironment('forest')">Forest</button>
+        <button onclick="changeEnvironment('winter')">Winter</button>
+    </div>    
+
+    <div id="scene-container"></div>
 </body>
 </html>
