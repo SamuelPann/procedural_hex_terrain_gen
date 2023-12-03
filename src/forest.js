@@ -3,12 +3,14 @@ import {
   Color, CylinderGeometry, 
   RepeatWrapping, DoubleSide, BoxGeometry, Mesh, PointLight, MeshPhysicalMaterial, 
   PerspectiveCamera, Scene, PMREMGenerator, PCFSoftShadowMap,
-  Vector2, TextureLoader, SphereGeometry, MeshStandardMaterial
+  Vector2, TextureLoader, SphereGeometry, MeshStandardMaterial, Vector3
 } from 'https://cdn.skypack.dev/three@0.137';
 import { OrbitControls } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/controls/OrbitControls';
 import { RGBELoader } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/loaders/RGBELoader';
 import { mergeBufferGeometries } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/utils/BufferGeometryUtils';
 import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@3.0.0';
+
+import { GUI } from './more_assets/lil-gui.module.min.js';
 
 export function setupForestScene() {
   // Reset geometry variables to initial state
@@ -34,13 +36,29 @@ export function setupForestScene() {
   document.body.appendChild(renderer.domElement);
 
   const light = new PointLight( new Color("#FFCB8E").convertSRGBToLinear().convertSRGBToLinear(), 80, 200 );
-  light.position.set(10, 20, 10);
   light.castShadow = true; 
   light.shadow.mapSize.width = 512; 
   light.shadow.mapSize.height = 512; 
   light.shadow.camera.near = 0.5; 
   light.shadow.camera.far = 500; 
   scene.add( light );
+
+  let gui = new GUI();
+  const guiParams = {
+    pauseLight: false,
+    lightSpeed: 0.005,
+    lightRadius: 30,
+    waterSpeed: 0.001,
+    pauseWater: false,
+    pauseClouds: false,
+  };
+
+  gui.add(guiParams, 'pauseLight').name('Pause Sun Rotation');
+  gui.add(guiParams, 'pauseWater').name('Pause Water Flow');
+  gui.add(guiParams, 'pauseClouds').name('Pause Cloud Movement');
+  gui.add(guiParams, 'lightSpeed', 0.001, 0.05).name('Sun Rotation Speed');
+  gui.add(guiParams, 'lightRadius', 5, 100).name('Distance of Sun');
+  gui.add(guiParams, 'waterSpeed', 0.0001, 0.01).name('Water Flow Speed');
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0,0,0);
@@ -92,10 +110,9 @@ export function setupForestScene() {
     let sandMesh  = hexMesh(sandGeo, textures.sand);
     scene.add(stoneMesh, dirtMesh, dirt2Mesh, sandMesh, grassMesh);
 
-    let seaTexture = textures.water;
-    seaTexture.repeat = new Vector2(1, 1);
-    seaTexture.wrapS = RepeatWrapping;
-    seaTexture.wrapT = RepeatWrapping;
+    let waterTexture = textures.water;
+    waterTexture.wrapS = RepeatWrapping;
+    waterTexture.wrapT = RepeatWrapping;
 
     let seaMesh = new Mesh(
       new CylinderGeometry(17, 17, MAX_HEIGHT * 0.2, 50),
@@ -109,8 +126,8 @@ export function setupForestScene() {
         envMapIntensity: 0.2, 
         roughness: 1,
         metalness: 0.025,
-        roughnessMap: seaTexture,
-        metalnessMap: seaTexture,
+        roughnessMap: waterTexture,
+        metalnessMap: waterTexture,
       })
     );
     seaMesh.receiveShadow = true;
@@ -145,10 +162,41 @@ export function setupForestScene() {
     mapFloor.position.set(0, -MAX_HEIGHT * 0.05, 0);
     scene.add(mapFloor);
 
-    clouds();
+    let cloudMeshes = [];
+    clouds(cloudMeshes);
+
+    let frameCount = 0;
 
     renderer.setAnimationLoop(() => {
       controls.update();
+
+      // check if the light should be paused
+      if (!guiParams.pauseLight) {
+        // Update the light position based on the frame count or time
+        const angle = (frameCount * guiParams.lightSpeed) % (Math.PI * 2);
+        const radius = guiParams.lightRadius;
+        light.position.set(radius * Math.cos(angle), 20, radius * Math.sin(angle));
+
+        frameCount++;
+      }
+
+      // check if the water should be paused
+      if (!guiParams.pauseWater) {
+        // Animate water texture
+        waterTexture.offset.x -= guiParams.waterSpeed; // Adjust the speed of water animation
+        seaMesh.material.roughnessMap.offset.x = waterTexture.offset.x;
+        seaMesh.material.metalnessMap.offset.x = waterTexture.offset.x;
+      }
+
+      // check if clouds should be paused
+      if (!guiParams.pauseClouds) {
+        // Rotate clouds in the scene
+        cloudMeshes.forEach((cloudMesh, index) => {
+          const rotationSpeed = 0.001;
+          cloudMesh.rotation.y += rotationSpeed * (index % 2 === 0 ? 1 : -1);
+        });
+      }
+      
       renderer.render(scene, camera);
     });
   })();
@@ -245,214 +293,45 @@ export function setupForestScene() {
     return geo;
   }
 
-  function clouds() {
-    let geo = new SphereGeometry(0, 0, 0); 
+  function clouds(cloudMeshes) {
+    // determines number of clouds
     let count = Math.floor(Math.pow(Math.random(), 0.45) * 4);
-
-    for(let i = 0; i < count; i++) {
+  
+    for (let i = 0; i < count; i++) {
+      // Create cloud geometry
       const puff1 = new SphereGeometry(1.2, 7, 7);
       const puff2 = new SphereGeometry(1.5, 7, 7);
       const puff3 = new SphereGeometry(0.9, 7, 7);
-      
+  
       puff1.translate(-1.85, Math.random() * 0.3, 0);
-      puff2.translate(0,     Math.random() * 0.3, 0);
-      puff3.translate(1.85,  Math.random() * 0.3, 0);
-
+      puff2.translate(0, Math.random() * 0.3, 0);
+      puff3.translate(1.85, Math.random() * 0.3, 0);
+  
       const cloudGeo = mergeBufferGeometries([puff1, puff2, puff3]);
-      cloudGeo.translate( 
-        Math.random() * 20 - 10, 
-        Math.random() * 7 + 7, 
+  
+      // Set initial position and rotation for the cloud
+      cloudGeo.translate(
+        Math.random() * 20 - 10,
+        Math.random() * 7 + 7,
         Math.random() * 20 - 10
       );
       cloudGeo.rotateY(Math.random() * Math.PI * 2);
-
-      geo = mergeBufferGeometries([geo, cloudGeo]);
+  
+      // Create cloud mesh
+      const cloudMesh = new Mesh(
+        cloudGeo,
+        new MeshStandardMaterial({
+          envMap: envmap,
+          envMapIntensity: 0.75,
+          flatShading: true,
+        })
+      );
+  
+      // Add the cloud mesh to the scene
+      scene.add(cloudMesh);
+      
+      // Add the cloud mesh to the array for later reference
+      cloudMeshes.push(cloudMesh);
     }
-    
-    const mesh = new Mesh(
-      geo,
-      new MeshStandardMaterial({
-        envMap: envmap, 
-        envMapIntensity: 0.75, 
-        flatShading: true,
-        // transparent: true,
-        // opacity: 0.85,
-      })
-    );
-
-    scene.add(mesh);
   }
 }
-
-
-/*
-const waterGeometry = new THREE.PlaneGeometry( 20, 20 );
-
-water = new Water( waterGeometry, {
-  color: waterParameters.color,
-  scale: waterParameters.scale,
-  flowDirection: new THREE.Vector2( waterParameters.flowX, waterParameters.flowY ),
-  textureWidth: 1024,
-  textureHeight: 1024
-} );
-
-water.position.y = 1;
-water.rotation.x = Math.PI * - 0.5;
-scene.add( water );
-*/
-
-/*
-// for dynamic water
-import * as THREE from './more_assets/three.module.js';
-import { GUI } from './more_assets/lil-gui.module.min.js';
-//import { OrbitControls } from './more_assets/OrbitControls.js';
-import { Water } from './more_assets/Water2.js';
-
-let water;
-
-const waterParameters = {
-  color: '#ffffff',
-  scale: 4,
-  flowX: 1,
-  flowY: 1
-};
-*/
-
-
-
-/*
-FULL EXAMPLE:
-
-import * as THREE from './more_assets/three.module.js';
-import { GUI } from './more_assets/lil-gui.module.min.js';
-import { OrbitControls } from './more_assets/OrbitControls.js';
-import { Water } from './more_assets/Water2.js';
-
-export function setupForestScene() {
-  let scene, camera, renderer, water;
-
-  const params = {
-    color: '#ffffff',
-    scale: 4,
-    flowX: 1,
-    flowY: 1
-  };
-
-  init();
-  animate();
-
-  function init() {
-
-    // scene
-    scene = new THREE.Scene();
-
-    // camera
-
-    camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.1, 200 );
-    camera.position.set( - 15, 7, 15 );
-    camera.lookAt( scene.position );
-
-
-    // water
-
-    const waterGeometry = new THREE.PlaneGeometry( 20, 20 );
-
-    water = new Water( waterGeometry, {
-      color: params.color,
-      scale: params.scale,
-      flowDirection: new THREE.Vector2( params.flowX, params.flowY ),
-      textureWidth: 1024,
-      textureHeight: 1024
-    } );
-
-    water.position.y = 1;
-    water.rotation.x = Math.PI * - 0.5;
-    scene.add( water );
-
-    // skybox
-
-    const cubeTextureLoader = new THREE.CubeTextureLoader();
-    cubeTextureLoader.setPath( 'textures/cube/' );
-
-    const cubeTexture = cubeTextureLoader.load( [
-      'posx.jpg', 'negx.jpg',
-      'posy.jpg', 'negy.jpg',
-      'posz.jpg', 'negz.jpg'
-    ] );
-
-    scene.background = cubeTexture;
-
-    // light
-
-    const ambientLight = new THREE.AmbientLight( 0xe7e7e7, 1.2 );
-    scene.add( ambientLight );
-
-    const directionalLight = new THREE.DirectionalLight( 0xffffff, 2 );
-    directionalLight.position.set( - 1, 1, 1 );
-    scene.add( directionalLight );
-
-    // renderer
-
-    renderer = new THREE.WebGLRenderer( { antialias: true } );
-    renderer.setSize( window.innerWidth, window.innerHeight );
-    renderer.setPixelRatio( window.devicePixelRatio );
-    document.body.appendChild( renderer.domElement );
-
-    // gui
-
-    
-    const gui = new GUI();
-
-    gui.addColor( params, 'color' ).onChange( function ( value ) {
-
-      water.material.uniforms[ 'color' ].value.set( value );
-
-    } );
-    gui.add( params, 'flowX', - 1, 1 ).step( 0.01 ).onChange( function ( value ) {
-
-      water.material.uniforms[ 'flowDirection' ].value.x = value;
-      water.material.uniforms[ 'flowDirection' ].value.normalize();
-
-    } );
-    gui.add( params, 'flowY', - 1, 1 ).step( 0.01 ).onChange( function ( value ) {
-
-      water.material.uniforms[ 'flowDirection' ].value.y = value;
-      water.material.uniforms[ 'flowDirection' ].value.normalize();
-
-    } );
-
-    gui.open();
-    
-
-    //
-
-    const controls = new OrbitControls( camera, renderer.domElement );
-    controls.minDistance = 5;
-    controls.maxDistance = 50;
-
-    //
-
-    window.addEventListener( 'resize', onWindowResize );
-
-  }
-
-  function onWindowResize() {
-
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize( window.innerWidth, window.innerHeight );
-
-  }
-
-
-  function animate() {
-    requestAnimationFrame( animate );
-    render();
-  }
-
-
-  function render() {
-    renderer.render( scene, camera );
-  }
-}
-*/

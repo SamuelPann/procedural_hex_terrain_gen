@@ -3,12 +3,14 @@ import {
   Color, CylinderGeometry, 
   RepeatWrapping, DoubleSide, BoxGeometry, Mesh, PointLight, MeshPhysicalMaterial, 
   PerspectiveCamera, Scene, PMREMGenerator, PCFSoftShadowMap,
-  Vector2, TextureLoader, SphereGeometry, MeshStandardMaterial
+  Vector2, TextureLoader, SphereGeometry, MeshStandardMaterial, Vector3
 } from 'https://cdn.skypack.dev/three@0.137';
 import { OrbitControls } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/controls/OrbitControls';
 import { RGBELoader } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/loaders/RGBELoader';
 import { mergeBufferGeometries } from 'https://cdn.skypack.dev/three-stdlib@2.8.5/utils/BufferGeometryUtils';
 import SimplexNoise from 'https://cdn.skypack.dev/simplex-noise@3.0.0';
+
+import { GUI } from './more_assets/lil-gui.module.min.js';
 
 export function setupWinterScene() {
   // Reset geometry variables to initial state
@@ -19,7 +21,7 @@ export function setupWinterScene() {
   let grassGeo = new BoxGeometry(0, 0, 0);
 
   const scene = new Scene();
-  scene.background = new Color("#c9e2ff");
+  scene.background = new Color("#FFCB8E");
 
   const camera = new PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 1000);
   camera.position.set(-17,31,33);
@@ -33,14 +35,30 @@ export function setupWinterScene() {
   renderer.shadowMap.type = PCFSoftShadowMap;
   document.body.appendChild(renderer.domElement);
 
-  const light = new PointLight( new Color("#c9e2ff").convertSRGBToLinear().convertSRGBToLinear(), 80, 200 );
-  light.position.set(10, 20, 10);
+  const light = new PointLight( new Color("#FFCB8E").convertSRGBToLinear().convertSRGBToLinear(), 80, 200 );
   light.castShadow = true; 
   light.shadow.mapSize.width = 512; 
   light.shadow.mapSize.height = 512; 
   light.shadow.camera.near = 0.5; 
   light.shadow.camera.far = 500; 
   scene.add( light );
+
+  let gui = new GUI();
+  const guiParams = {
+    pauseLight: false,
+    lightSpeed: 0.005,
+    lightRadius: 30,
+    waterSpeed: 0.001,
+    pauseWater: false,
+    pauseClouds: false,
+  };
+
+  gui.add(guiParams, 'pauseLight').name('Pause Sun Rotation');
+  gui.add(guiParams, 'pauseWater').name('Pause Water Flow');
+  gui.add(guiParams, 'pauseClouds').name('Pause Cloud Movement');
+  gui.add(guiParams, 'lightSpeed', 0.001, 0.05).name('Sun Rotation Speed');
+  gui.add(guiParams, 'lightRadius', 5, 100).name('Distance of Sun');
+  gui.add(guiParams, 'waterSpeed', 0.0001, 0.01).name('Water Flow Speed');
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0,0,0);
@@ -92,10 +110,9 @@ export function setupWinterScene() {
     let sandMesh  = hexMesh(sandGeo, textures.sand);
     scene.add(stoneMesh, dirtMesh, dirt2Mesh, sandMesh, grassMesh);
 
-    let seaTexture = textures.water;
-    seaTexture.repeat = new Vector2(1, 1);
-    seaTexture.wrapS = RepeatWrapping;
-    seaTexture.wrapT = RepeatWrapping;
+    let waterTexture = textures.water;
+    waterTexture.wrapS = RepeatWrapping;
+    waterTexture.wrapT = RepeatWrapping;
 
     let seaMesh = new Mesh(
       new CylinderGeometry(17, 17, MAX_HEIGHT * 0.2, 50),
@@ -109,15 +126,14 @@ export function setupWinterScene() {
         envMapIntensity: 0.2, 
         roughness: 1,
         metalness: 0.025,
-        roughnessMap: seaTexture,
-        metalnessMap: seaTexture,
+        roughnessMap: waterTexture,
+        metalnessMap: waterTexture,
       })
     );
     seaMesh.receiveShadow = true;
     seaMesh.rotation.y = -Math.PI * 0.333 * 0.5;
     seaMesh.position.set(0, MAX_HEIGHT * 0.1, 0);
     scene.add(seaMesh);
-
 
     let mapContainer = new Mesh(
       new CylinderGeometry(17.1, 17.1, MAX_HEIGHT * 0.25, 50, 1, true),
@@ -146,10 +162,41 @@ export function setupWinterScene() {
     mapFloor.position.set(0, -MAX_HEIGHT * 0.05, 0);
     scene.add(mapFloor);
 
-    clouds();
+    let cloudMeshes = [];
+    clouds(cloudMeshes);
+
+    let frameCount = 0;
 
     renderer.setAnimationLoop(() => {
       controls.update();
+
+      // check if the light should be paused
+      if (!guiParams.pauseLight) {
+        // Update the light position based on the frame count or time
+        const angle = (frameCount * guiParams.lightSpeed) % (Math.PI * 2);
+        const radius = guiParams.lightRadius;
+        light.position.set(radius * Math.cos(angle), 20, radius * Math.sin(angle));
+
+        frameCount++;
+      }
+
+      // check if the water should be paused
+      if (!guiParams.pauseWater) {
+        // Animate water texture
+        waterTexture.offset.x -= guiParams.waterSpeed; // Adjust the speed of water animation
+        seaMesh.material.roughnessMap.offset.x = waterTexture.offset.x;
+        seaMesh.material.metalnessMap.offset.x = waterTexture.offset.x;
+      }
+
+      // check if clouds should be paused
+      if (!guiParams.pauseClouds) {
+        // Rotate clouds in the scene
+        cloudMeshes.forEach((cloudMesh, index) => {
+          const rotationSpeed = 0.001;
+          cloudMesh.rotation.y += rotationSpeed * (index % 2 === 0 ? 1 : -1);
+        });
+      }
+      
       renderer.render(scene, camera);
     });
   })();
@@ -246,41 +293,45 @@ export function setupWinterScene() {
     return geo;
   }
 
-  function clouds() {
-    let geo = new SphereGeometry(0, 0, 0); 
+  function clouds(cloudMeshes) {
+    // determines number of clouds
     let count = Math.floor(Math.pow(Math.random(), 0.45) * 4);
-
-    for(let i = 0; i < count; i++) {
+  
+    for (let i = 0; i < count; i++) {
+      // Create cloud geometry
       const puff1 = new SphereGeometry(1.2, 7, 7);
       const puff2 = new SphereGeometry(1.5, 7, 7);
       const puff3 = new SphereGeometry(0.9, 7, 7);
-      
+  
       puff1.translate(-1.85, Math.random() * 0.3, 0);
-      puff2.translate(0,     Math.random() * 0.3, 0);
-      puff3.translate(1.85,  Math.random() * 0.3, 0);
-
+      puff2.translate(0, Math.random() * 0.3, 0);
+      puff3.translate(1.85, Math.random() * 0.3, 0);
+  
       const cloudGeo = mergeBufferGeometries([puff1, puff2, puff3]);
-      cloudGeo.translate( 
-        Math.random() * 20 - 10, 
-        Math.random() * 7 + 7, 
+  
+      // Set initial position and rotation for the cloud
+      cloudGeo.translate(
+        Math.random() * 20 - 10,
+        Math.random() * 7 + 7,
         Math.random() * 20 - 10
       );
       cloudGeo.rotateY(Math.random() * Math.PI * 2);
-
-      geo = mergeBufferGeometries([geo, cloudGeo]);
+  
+      // Create cloud mesh
+      const cloudMesh = new Mesh(
+        cloudGeo,
+        new MeshStandardMaterial({
+          envMap: envmap,
+          envMapIntensity: 0.75,
+          flatShading: true,
+        })
+      );
+  
+      // Add the cloud mesh to the scene
+      scene.add(cloudMesh);
+      
+      // Add the cloud mesh to the array for later reference
+      cloudMeshes.push(cloudMesh);
     }
-    
-    const mesh = new Mesh(
-      geo,
-      new MeshStandardMaterial({
-        envMap: envmap, 
-        envMapIntensity: 0.75, 
-        flatShading: true,
-        // transparent: true,
-        // opacity: 0.85,
-      })
-    );
-
-    scene.add(mesh);
   }
 }
